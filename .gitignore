@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Local data & secrets
+.env
+data/sure.db
+data/sure.db-wal
+data/sure.db-shm
+data/media/
+data/uploads_tmp/
+docker/qdrant_storage/
+docker/neo4j_data/
+docker/neo4j_logs/
+.hf_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

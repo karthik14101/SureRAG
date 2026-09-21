@@ -1,0 +1,79 @@
+# =============================================================================
+# SURE-GraphRAG :: backend dependencies
+#   pip install -r requirements.txt
+#
+# VERSIONING POLICY
+#   Direct dependencies use compatible ranges (>=known-good, <next-major) rather
+#   than exact pins. Exact-pinning every package in an app with this many
+#   interlocking ML libraries makes pip's resolver fail on the first transitive
+#   disagreement, which is exactly what happened with Pillow vs fastembed.
+#
+#   Transitive dependencies (transformers, huggingface-hub, numpy, tokenizers,
+#   onnxruntime, starlette, anyio) are deliberately NOT listed: they are owned by
+#   sentence-transformers, fastembed and fastapi, and letting those packages pick
+#   their own compatible versions is what keeps the resolve solvable.
+#
+# NOTE ON TORCH: on Windows, `torch` from PyPI is already the CPU-only build
+# (~250 MB). On Linux the default wheel bundles CUDA (~2.5 GB); if you are on
+# Linux and want the small CPU build, install torch first with:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# then run this file.
+#
+# Requires Python 3.11 or 3.12.
+# =============================================================================
+
+# --- Web framework -----------------------------------------------------------
+fastapi>=0.115.6,<1.0
+uvicorn[standard]>=0.34.0,<1.0
+python-multipart>=0.0.20,<0.1
+pydantic>=2.10.4,<3.0
+pydantic-settings>=2.7.0,<3.0
+
+# --- Relational storage ------------------------------------------------------
+SQLAlchemy>=2.0.36,<2.1
+
+# --- Auth --------------------------------------------------------------------
+# bcrypt is used DIRECTLY, not through passlib: passlib 1.7.4 reads
+# bcrypt.__about__, which bcrypt 4.x removed, producing the well-known
+#   AttributeError: module 'bcrypt' has no attribute '__about__'
+bcrypt>=4.2.1,<5.0
+
+# --- Vector database ---------------------------------------------------------
+qdrant-client>=1.12.2,<2.0
+
+# Supplies the BM25 sparse encoder for the keyword half of hybrid search.
+# 0.7+ is required: fastembed 0.5.x pins pillow<11 and deadlocks the resolve.
+#
+# OPTIONAL. It pulls in onnxruntime (~200 MB), which is heavy for what is really
+# just a tokeniser. If you would rather skip it, delete the next line and set
+# SPARSE_ENABLED=false in .env -- retrieval then runs dense-only, which the code
+# already handles as a first-class path (see app/embeddings/sparse.py).
+fastembed>=0.7,<1.0
+
+# --- Graph database ----------------------------------------------------------
+neo4j>=5.27.0,<6.0
+
+# --- Local embeddings (free, CPU) --------------------------------------------
+# transformers, huggingface-hub and tokenizers come in through this package.
+sentence-transformers>=3.3.1,<5.0
+torch>=2.5.1,<3.0
+
+# --- Document ingestion ------------------------------------------------------
+PyMuPDF>=1.25.1,<2.0     # PDF text + embedded figure extraction
+python-docx>=1.1.2,<2.0  # Word documents
+Pillow>=10.4,<12.0       # image handling, thumbnails, blank-figure detection
+pytesseract>=0.3.13,<0.4 # OCR wrapper (needs the Tesseract binary; optional)
+
+# --- LLM providers -----------------------------------------------------------
+google-genai>=1.2.0,<2.0 # Google AI Studio / Gemini (the current SDK)
+groq>=0.15.0,<1.0        # GroqCloud
+openai>=1.68,<4.0        # Azure OpenAI / Azure AI Foundry (via the v1 API)
+# Local providers need nothing extra:
+#   LLM_PROVIDER=ollama      -> plain HTTP via httpx (listed below)
+#   LLM_PROVIDER=huggingface -> transformers + torch (already installed above)
+# Optional, NVIDIA GPU only, for HF_LOAD_IN_4BIT=true:
+#   pip install bitsandbytes accelerate
+
+# --- Utilities ---------------------------------------------------------------
+python-dotenv>=1.0.1,<2.0
+httpx>=0.27,<1.0
