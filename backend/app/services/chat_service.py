@@ -19,6 +19,46 @@ HISTORY_TURN_LIMIT = 8
 SUMMARY_TRIGGER = 12
 
 
+# Filenames listed in the corpus profile. Enough to characterise the corpus
+# without turning a verifier prompt into a directory listing.
+PROFILE_FILE_LIMIT = 6
+
+
+def corpus_profile(db: Session, kb_id: str) -> str:
+    """One line describing what this knowledge base holds.
+
+    The verifier uses it to judge sufficiency against what the corpus could
+    plausibly contain. Without it, asking a corpus of statutes about case law
+    produces "insufficient" forever: the verifier compares the context to an
+    ideal answer, and no amount of searching closes a gap the corpus never had.
+    """
+    kb = db.get(models.KnowledgeBase, kb_id)
+    if kb is None:
+        return ""
+
+    filenames = db.execute(
+        select(models.Document.filename)
+        .where(models.Document.kb_id == kb_id, models.Document.status == "ready")
+        .order_by(models.Document.created_at.asc())
+        .limit(PROFILE_FILE_LIMIT + 1)
+    ).scalars().all()
+
+    parts = ['Knowledge base: "{}"'.format(kb.name)]
+    if kb.description:
+        parts.append(kb.description.strip()[:300])
+
+    if filenames:
+        shown = ", ".join(filenames[:PROFILE_FILE_LIMIT])
+        if len(filenames) > PROFILE_FILE_LIMIT:
+            shown += " and {} more".format(kb.doc_count - PROFILE_FILE_LIMIT)
+        parts.append(
+            "Contains {} document(s) ({} passages): {}".format(
+                kb.doc_count, kb.chunk_count, shown
+            )
+        )
+    return ". ".join(parts)
+
+
 def load_history(db: Session, session_id: str) -> tuple[list[ChatMessage], str | None]:
     chat = db.get(models.ChatSession, session_id)
     summary = chat.history_summary if chat else None
@@ -48,6 +88,73 @@ def save_user_message(db: Session, session_id: str, content: str) -> models.Mess
     db.commit()
     db.refresh(message)
     return message
+
+
+DEFAULT_TITLE = "New chat"
+
+
+def _fallback_title(text: str) -> str:
+    """A thread name taken straight from a question, with no model call."""
+    return " ".join((text or "").split())[:60].rstrip() or DEFAULT_TITLE
+
+
+def delete_message(db: Session, session_id: str, message_id: str) -> int:
+    """Remove one turn from a thread. Returns how many messages went.
+
+    A question takes the answer it produced with it; the rest of the thread is
+    left alone. Deleting an answer on its own leaves the question standing,
+    which is what someone clearing a bad response means by it.
+
+    Ordering is by position rather than timestamp. A question and its answer can
+    land in the same clock tick, and comparing timestamps would then delete
+    either both or neither depending on which way the tie fell.
+    """
+    rows = db.execute(
+        select(models.Message)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.created_at.asc(), models.Message.id.asc())
+    ).scalars().all()
+
+    index = next((i for i, row in enumerate(rows) if row.id == message_id), None)
+    if index is None:
+        return 0
+
+    doomed = [rows[index]]
+    # An answer belongs to the question above it; take it along.
+    if rows[index].role == "user":
+        for row in rows[index + 1 :]:
+            if row.role == "user":
+                break
+            doomed.append(row)
+
+    doomed_ids = {row.id for row in doomed}
+    for row in doomed:
+        db.delete(row)
+
+    chat = db.get(models.ChatSession, session_id)
+    if chat is not None:
+        chat.message_count = max(0, chat.message_count - len(doomed))
+
+        # A thread is named after its first question, and only ever once --
+        # `maybe_title_session` refuses to rename a thread that already has a
+        # name. Delete that first question and the sidebar goes on advertising
+        # something no longer in the thread.
+        if index == 0:
+            survivor = next(
+                (row.content for row in rows if row.id not in doomed_ids and row.role == "user"),
+                "",
+            )
+            # A question still standing renames the thread immediately, with no
+            # model call. An emptied thread goes back to the default, which is
+            # the one state `maybe_title_session` will act on again.
+            chat.title = _fallback_title(survivor) if survivor else DEFAULT_TITLE
+        # The rolling summary describes turns that may no longer exist. Drop it
+        # rather than let the next answer cite a question the user removed; the
+        # summariser rebuilds it once the thread is long enough again.
+        chat.history_summary = None
+
+    db.commit()
+    return len(doomed)
 
 
 def save_assistant_message(db: Session, session_id: str, state: AgentState) -> models.Message:
@@ -108,12 +215,12 @@ async def maybe_title_session(db: Session, session_id: str, first_message: str) 
     if chat is None or chat.title not in ("New chat", "", None):
         return
 
-    fallback = " ".join(first_message.split())[:60].rstrip()
+    fallback = _fallback_title(first_message)
     try:
         from app.agent.prompts import TITLE_SYSTEM
-        from app.llm.factory import get_llm
+        from app.llm.factory import get_fast_llm
 
-        llm = get_llm()
+        llm = get_fast_llm()
         result = await llm.complete(
             TITLE_SYSTEM,
             [ChatMessage(role="user", content=first_message[:500])],
@@ -156,9 +263,9 @@ async def maybe_summarise_history(db: Session, session_id: str) -> None:
 
     try:
         from app.agent.prompts import SUMMARY_SYSTEM
-        from app.llm.factory import get_llm
+        from app.llm.factory import get_fast_llm
 
-        llm = get_llm()
+        llm = get_fast_llm()
         result = await llm.complete(
             SUMMARY_SYSTEM,
             [ChatMessage(role="user", content=transcript[:12000])],

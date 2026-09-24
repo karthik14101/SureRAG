@@ -19,21 +19,29 @@ async def rerank(state: AgentState) -> AgentState:
         return state
 
     started = time.perf_counter()
+    pooled = len(state.chunks)
     before = [c.chunk_id for c in state.chunks[:5]]
 
     state.chunks = await search.apply_reranking(state.query, state.chunks)
 
     after = [c.chunk_id for c in state.chunks[:5]]
-    changed = before != after
+    promoted = len([cid for cid in after if cid not in before])
+
+    if promoted:
+        detail = "Cross-encoder rescored {} passage(s) against the question; {} new one(s) reached the top 5.".format(
+            pooled, promoted
+        )
+    else:
+        detail = "Cross-encoder rescored {} passage(s) and confirmed the order.".format(pooled)
 
     state.add_trace(
         "rerank",
         "Reranked results",
-        "Cross-encoder reordered the top passages."
-        if changed
-        else "Cross-encoder confirmed the original order.",
+        detail,
         started,
+        pooled=pooled,
         kept=len(state.chunks),
-        reordered=changed,
+        reordered=before != after,
+        promoted=promoted,
     )
     return state

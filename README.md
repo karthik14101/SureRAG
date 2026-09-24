@@ -23,6 +23,15 @@ answer generation calls an LLM API, and you choose which one.
 
 ---
 
+## Deeper reading
+
+| | |
+|---|---|
+| [**Architecture**](docs/ARCHITECTURE.md) | Three diagrams — the whole system, how a document is ingested, and what happens to a question — each with a point-by-point walkthrough |
+| [**Why this is different**](docs/WHY-DIFFERENT.md) | What sets this apart from an ordinary retrieve-and-generate pipeline, the evidence for each claim, and an honest list of what it is *not* better at |
+
+---
+
 ## Table of contents
 
 - [Step 0 — Install the prerequisites](#step-0--install-the-prerequisites)
@@ -35,6 +44,7 @@ answer generation calls an LLM API, and you choose which one.
 - [Daily use](#daily-use-after-the-first-setup)
 - [Troubleshooting](#troubleshooting)
 - [How it works](#how-it-works)
+- [Running the tests](#running-the-tests)
 - [Configuration reference](#configuration-reference)
 
 ---
@@ -420,8 +430,32 @@ same status report without leaving the browser.
      passage in its original context
    - source chips beneath the answer
    - any relevant figures from the document
-   - **"How this answer was built"** — expand it to see the route taken, the
-     evidence-sufficiency score, and whether an expansion pass was needed
+   - **"How this answer was built"** — expand it to see the route taken, every
+     step with its timing, and two separate confidence numbers:
+     - **Answer grounding** — the share of the answer's claims that cite a
+       source. This is the headline figure, because it is about the answer you
+       are reading.
+     - **Evidence coverage** — the SURE verifier's verdict on the retrieved
+       evidence, formed *before* the answer was written. The two can disagree,
+       and the disagreement is informative: on a question whose answer has to
+       be assembled from several provisions, the verifier reports partial
+       coverage because no single passage states the conclusion, while the
+       answer built from those provisions is fully cited.
+     - When the verifier concludes the knowledge base simply does not hold this
+       kind of material, the badge reads **"Not in this KB"** instead of a
+       score, and the answer is capped at a short, honest statement of what is
+       absent rather than a long tour of the gaps.
+
+   Sentences *about* the evidence ("the sources do not explain X") are not
+   counted as uncited claims: the engine asks for that sentence when evidence is
+   thin, so scoring it as ungrounded would penalise the answer for following
+   instructions.
+6. Back on the knowledge base page, open the **Chunks** tab to see exactly what
+   was indexed, and the **Graph** tab to see the entities and relationships that
+   were extracted. Click an entity to see what it connects to and which passages
+   it came from; double-click a node in the picture to pull in its neighbours.
+   The Graph tab needs Neo4j running and `npm install` to have been run (it uses
+   `cytoscape`); the entity and relation lists work without the picture.
 
 If all five happen, the whole stack is working.
 
@@ -602,6 +636,56 @@ static mount, so one user's extracted figures are never reachable by URL.
 
 ---
 
+# Running the tests
+
+Nothing here touches Azure, Qdrant or Neo4j. Providers are stubbed, the vector
+store is faked, and anything needing a database gets a throwaway SQLite file, so
+the suite costs no quota and needs no service running.
+
+**Backend** — from the `backend` directory, with the virtualenv active:
+
+```powershell
+python tests/run.py                 # everything
+python tests/run.py stop_rules      # just the files matching a name
+```
+
+No test framework is required. These are ordinary pytest files, so if you prefer
+its output, `pip install pytest` and run `pytest` from the same directory — the
+runner exists so that a suite you need on a bad day is never one install away.
+
+**Frontend** — from the `frontend` directory:
+
+```powershell
+npm test
+```
+
+esbuild already ships with Vite, so this needs no extra dependency either.
+
+### What is covered, and why these tests exist
+
+Most of these encode a bug that reached real traffic, which is the point of
+keeping them:
+
+| Area | The failure it locks down |
+|---|---|
+| `test_stop_rules` | The expansion loop ran until a hard budget killed it. Every stop rule softer than "did the score go up?" is preserved here as a failing case |
+| `test_scope_grounding` | `in_scope` was dead code — a missing JSON key reads as `False`, which is indistinguishable from "yes, in scope" |
+| `test_budget_and_seeds` | One shared call budget, spent entirely on cheap calls; and reranking that deleted evidence the verifier had already confirmed |
+| `test_rerank_blending` | Letting the cross-encoder decide alone demoted the two articles the question named — Article 45 from rank 2 to 7, Article 51A from 7 to 11 |
+| `test_azure_provider` | Every Azure 400 the engine learned to negotiate, reproduced by a fake client |
+| `test_upload_cap` | A 2 GB upload was fully resident in memory before being rejected |
+| `test_message_delete` | Deleting the first question left the sidebar naming a question no longer there |
+| `test_understand` | A substring marker matched "t-**he** ", so every question containing the word "the" was rewritten as though it were a follow-up |
+| `test_concurrency` | Multi-query retrieval ran its searches one at a time, putting up to six round trips in series on the two slowest paths |
+| `test_window_recovery` | Expansion pushed a passage the verifier had just credited out of its twelve-passage window, and the answer was written without it |
+| `test_imports` | Cheap, and it catches refactors that move a function without moving its import |
+
+One live-service check is deliberately **not** in the suite: the graph API needs
+Neo4j running and real ingested data, so it cannot be part of something you run
+without thinking.
+
+---
+
 # Configuration reference
 
 Every setting lives in `.env` and is documented inline there. The ones worth
@@ -618,9 +702,15 @@ knowing:
 | `AZURE_OPENAI_REASONING_EFFORT` | `low` | Thinking budget for reasoning deployments: `minimal`/`low`/`medium`/`high` |
 | `SURE_THRESHOLD` | `0.65` | Sufficiency score below which expansion triggers. Raise for stricter answers, lower for faster ones |
 | `AGENT_MAX_ITERATIONS` | `2` | Expansion passes allowed per question |
+| `AGENT_MAX_LLM_CALLS` | `6` | Full-reasoning calls per question. With a fast tier configured this governs answer generation only |
+| `AGENT_MAX_FAST_LLM_CALLS` | `12` | Fast-tier calls per question — the condenser, router, verifier and expansion probes. Counted apart because they cost a fraction of a reasoning call; without a fast tier they fall back to the budget above |
 | `AGENT_TIMEOUT_SECONDS` | `45` | Hard wall-clock cap per question |
 | `GRAPH_EXTRACTION` | `selective` | `on` (richest graph) / `selective` (~60% cheaper) / `off` (no LLM calls during ingestion) |
-| `RERANK_ENABLED` | `false` | Local cross-encoder reranking. Biggest single precision win; adds ~0.3s per query and an 80 MB download |
+| `RERANK_ENABLED` | `true` | Local cross-encoder reranking, ~1.3s per query on CPU and an 80 MB download. Retrieval pools passages from several queries whose scores are not comparable; without this, the evidence the verifier reads is an arbitrary slice of the pool |
+| `RERANK_WEIGHT` | `0.6` | How much the cross-encoder overrides retrieval order. It is trained on web text and is not always better on structured records, so retrieval is kept as a prior |
+| `AZURE_OPENAI_FAST_DEPLOYMENT` | *(empty)* | Optional second deployment for routing, condensing and verification. Empty = the same deployment at minimal reasoning effort |
+| `AZURE_OPENAI_FAST_REASONING_EFFORT` | `minimal` | Effort for those small JSON calls. Azure bills reasoning tokens as output, so this cuts quota as well as latency |
+| `GROQ_FAST_MODEL` / `GEMINI_FAST_MODEL` / `OLLAMA_FAST_MODEL` / `HF_FAST_MODEL` | *(empty)* | Same idea per provider. Empty means the fast tier is the main model |
 | `RETRIEVAL_TOP_K` | `12` | Passages retrieved per query |
 | `CHUNK_SIZE_TOKENS` | `800` | Chunk size. Smaller = more precise citations, larger = more context per chunk |
 | `INGEST_CONCURRENCY` | `2` | Files processed in parallel |

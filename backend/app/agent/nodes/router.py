@@ -13,7 +13,7 @@ from app.agent.prompts import ROUTER_SYSTEM, ROUTER_TEMPLATE
 from app.agent.state import AgentState, Route
 from app.graph.neo4j_client import is_available as graph_available
 from app.llm.base import ChatMessage
-from app.llm.factory import get_llm
+from app.llm.factory import get_fast_llm
 from app.logging_conf import get_logger
 
 logger = get_logger(__name__)
@@ -138,14 +138,14 @@ async def route_query(state: AgentState) -> AgentState:
 
     # Escalate to the classifier.
     try:
-        llm = get_llm()
+        llm = get_fast_llm()
         prompt = ROUTER_TEMPLATE.format(
             question=state.query, graph_available="yes" if graph_on else "no"
         )
         payload, usage = await llm.complete_json(
             ROUTER_SYSTEM, prompt, temperature=0.0, max_tokens=150
         )
-        state.spend_call(usage)
+        state.spend_call(usage, fast=True)
 
         state.route = _coerce_route(payload.get("route"), graph_on)
         state.route_reason = str(payload.get("reason") or "Classified by the model.")[:200]

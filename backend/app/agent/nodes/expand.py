@@ -21,7 +21,7 @@ from app.agent.state import AgentState
 from app.graph import traversal
 from app.graph.neo4j_client import is_available
 from app.llm.base import ChatMessage
-from app.llm.factory import get_llm
+from app.llm.factory import get_fast_llm
 from app.logging_conf import get_logger
 from app.vectorstore import search
 
@@ -38,8 +38,14 @@ async def _generate_queries(state: AgentState) -> list[str]:
         return []
 
     try:
-        llm = get_llm()
-        covered = "\n".join("- " + c.filename for c in state.chunks[:5]) or "- (nothing yet)"
+        llm = get_fast_llm()
+        # The verifier's own account of what the evidence covers, not the list of
+        # filenames this used to send. The template asks what is already covered,
+        # and answering it with "curvv-ev-owners-manual.pdf" five times told the
+        # query writer nothing. What it says instead is the vocabulary these
+        # documents actually use, which is the whole difficulty when a question
+        # names something by its shape or its symptom.
+        covered = "\n".join("- " + c for c in state.covered_aspects) or "- (nothing yet)"
         missing = "\n".join("- " + m for m in state.missing_aspects)
         payload, usage = await llm.complete_json(
             EXPANSION_SYSTEM,
@@ -49,7 +55,7 @@ async def _generate_queries(state: AgentState) -> list[str]:
             temperature=0.3,
             max_tokens=300,
         )
-        state.spend_call(usage)
+        state.spend_call(usage, fast=True)
         raw = payload.get("queries") or []
         queries = [str(q).strip() for q in raw if str(q).strip()]
         return queries[:MAX_EXPANSION_QUERIES]
@@ -64,14 +70,14 @@ async def _hyde_probe(state: AgentState) -> str | None:
     if state.budget_exhausted():
         return None
     try:
-        llm = get_llm()
+        llm = get_fast_llm()
         result = await llm.complete(
             HYDE_SYSTEM,
             [ChatMessage(role="user", content=state.query)],
             temperature=0.4,
             max_tokens=300,
         )
-        state.spend_call(result.usage)
+        state.spend_call(result.usage, fast=True)
         text = result.text.strip()
         return text if len(text) > 40 else None
     except Exception as exc:  # noqa: BLE001
@@ -120,6 +126,8 @@ async def expand_and_retrieve(state: AgentState) -> AgentState:
     before = len(state.chunks)
     state.chunks = search.deduplicate(state.chunks + new_chunks + graph_chunks)
     added = len(state.chunks) - before
+    # The orchestrator uses this to decide whether another pass is worth it.
+    state.last_expansion_gain = added
 
     detail_parts = []
     if queries:

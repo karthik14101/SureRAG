@@ -19,6 +19,7 @@ import { Badge, Button, Spinner } from '../components/ui'
 import { Dropzone, UploadQueue } from '../components/kb/Dropzone'
 import { DocumentTable } from '../components/kb/DocumentTable'
 import { ChunkExplorer } from '../components/kb/ChunkExplorer'
+import { GraphExplorer } from '../components/kb/GraphExplorer'
 import { ImageGallery } from '../components/media/ImageGallery'
 
 function StatCard({ icon: Icon, label, value, hint }) {
@@ -188,6 +189,7 @@ export function KBDetailPage() {
           {[
             ['documents', `Documents (${documents.length})`],
             ['chunks', `Chunks (${formatNumber(stats?.chunk_count ?? 0)})`],
+            ['graph', `Graph (${formatNumber(stats?.entity_count ?? 0)})`],
             ['images', `Images (${stats?.image_count ?? 0})`],
           ].map(([value, label]) => (
             <button
@@ -221,6 +223,8 @@ export function KBDetailPage() {
         {tab === 'documents' && <DocumentTable documents={documents} onDeleted={refresh} />}
 
         {tab === 'chunks' && <ChunkExplorer kbId={kbId} />}
+
+        {tab === 'graph' && <GraphExplorer kbId={kbId} />}
 
         {tab === 'images' && (
           <div className="p-4">

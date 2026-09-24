@@ -1,6 +1,7 @@
 """Upload and document management endpoints."""
 from __future__ import annotations
 
+import pathlib
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, UploadFile
@@ -20,6 +21,37 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["documents"])
 
 MAX_FILES_PER_REQUEST = 50
+
+# `UploadFile` spools to disk while the request is being received, but `.read()`
+# with no argument materialises the whole file as one bytes object -- and the
+# size check used to live in staging, which runs afterwards. A 2 GB file was
+# therefore fully resident in memory before anything rejected it. Reading in
+# bounded chunks lets that decision happen while the file is still arriving.
+READ_CHUNK_BYTES = 1024 * 1024
+
+# Per-file size is capped by MAX_UPLOAD_MB. This caps a whole request, so fifty
+# files each just under that limit cannot add up to something that kills the
+# process. Sized so one maximum-size file always fits on its own.
+MAX_REQUEST_BYTES = max(settings.max_upload_bytes, 512 * 1024 * 1024)
+
+
+async def _read_capped(upload: UploadFile, limit: int) -> bytes | None:
+    """Read an upload, giving up the moment it exceeds `limit`.
+
+    Returns None for a file that is too large, having held at most `limit` plus
+    one chunk rather than the whole thing.
+    """
+    parts: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            return None
+        parts.append(chunk)
+    return b"".join(parts)
 
 
 @router.post("/kb/{kb_id}/documents", response_model=UploadAccepted, status_code=202)
@@ -53,10 +85,34 @@ async def upload_documents(
     db.refresh(job)
 
     payloads: list[tuple[str, bytes]] = []
+    rejected: list[dict] = []
+    remaining = MAX_REQUEST_BYTES
+
     for upload in files:
-        content = await upload.read()
-        payloads.append((upload.filename or "upload", content))
+        raw_name = upload.filename or "upload"
+        # Staging sanitises the name it stores; this one is only for the message.
+        display = pathlib.Path(raw_name).name or "upload"
+
+        cap = min(settings.max_upload_bytes, remaining)
+        content = await _read_capped(upload, cap)
         await upload.close()
+
+        if content is None:
+            rejected.append(
+                {
+                    "name": display,
+                    "reason": (
+                        "Larger than the {} MB limit.".format(settings.max_upload_mb)
+                        if cap >= settings.max_upload_bytes
+                        else "This upload already carries {} MB. Send the rest "
+                        "separately.".format(MAX_REQUEST_BYTES // (1024 * 1024))
+                    ),
+                }
+            )
+            continue
+
+        remaining -= len(content)
+        payloads.append((raw_name, content))
 
     try:
         intake = dispatcher.stage_uploads(
@@ -68,6 +124,10 @@ async def upload_documents(
         db.commit()
         dispatcher.cleanup_staging(job.id)
         raise
+
+    # Merge before the empty check below, so a request whose files were all
+    # rejected here still reports why rather than looking like an empty upload.
+    intake.skipped.extend(rejected)
 
     if not intake.staged:
         job.state = "completed_with_errors" if intake.skipped else "completed"

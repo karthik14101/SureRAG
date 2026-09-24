@@ -82,6 +82,21 @@ export const useChatStore = create((set, get) => ({
     })
   },
 
+  /** Remove one turn: the question and the answer it produced. */
+  async deleteMessage(messageId) {
+    const sessionId = get().activeSessionId
+    if (!sessionId) return
+    await chatApi.deleteMessage(sessionId, messageId)
+    // Re-read rather than splice locally. The server decides how far a delete
+    // reaches, and guessing at it here is how the two drift apart.
+    const messages = await chatApi.messages(sessionId)
+    set({ messages })
+    // Removing the first question renames the thread, and no answer follows
+    // to refresh the sidebar for us the way sending one does.
+    const kbId = get().sessions.find((s) => s.id === sessionId)?.kb_id
+    if (kbId) await get().loadSessions(kbId)
+  },
+
   /**
    * Send a question and consume the answer stream.
    * Events arrive in order: user_message, trace*, status, token*, done, saved, end.

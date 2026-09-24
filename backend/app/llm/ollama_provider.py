@@ -74,8 +74,10 @@ def _error_text(response: httpx.Response) -> str:
 class OllamaProvider(LLMProvider):
     name = "ollama"
 
-    def __init__(self) -> None:
-        self.model = (settings.ollama_model or "").strip()
+    def __init__(self, fast: bool = False) -> None:
+        self.fast = fast
+        wanted = (settings.ollama_fast_model if fast else "") or settings.ollama_model
+        self.model = (wanted or "").strip()
         if not self.model:
             raise UpstreamError(
                 "OLLAMA_MODEL is empty. Pull a model and name it in .env, e.g. "

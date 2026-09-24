@@ -18,7 +18,7 @@ from app.agent.state import AgentState
 from app.config import settings
 from app.graph import traversal
 from app.graph.neo4j_client import is_available
-from app.llm.factory import get_llm
+from app.llm.factory import get_fast_llm
 from app.logging_conf import get_logger
 from app.vectorstore import search
 
@@ -32,6 +32,9 @@ async def retrieve_hybrid(state: AgentState) -> AgentState:
 
     async def _vector() -> list:
         try:
+            claimed = await state.take_prefetch(state.query, settings.retrieval_top_k)
+            if claimed is not None:
+                return claimed
             return await search.hybrid_search(
                 state.query,
                 user_id=state.user_id,
@@ -91,14 +94,14 @@ async def retrieve_hybrid(state: AgentState) -> AgentState:
 async def decompose_question(state: AgentState) -> list[str]:
     """Split a complex question into independently answerable parts."""
     try:
-        llm = get_llm()
+        llm = get_fast_llm()
         payload, usage = await llm.complete_json(
             DECOMPOSE_SYSTEM,
             DECOMPOSE_TEMPLATE.format(question=state.query),
             temperature=0.0,
             max_tokens=350,
         )
-        state.spend_call(usage)
+        state.spend_call(usage, fast=True)
         raw = payload.get("sub_questions") or []
         questions = [
             str(q).strip()
@@ -133,29 +136,39 @@ async def retrieve_multihop(state: AgentState) -> AgentState:
     queries = [state.query] + sub_questions
     per_query = max(4, settings.retrieval_top_k // max(1, len(queries)) + 2)
 
-    pooled = await search.multi_query_search(
-        queries,
-        user_id=state.user_id,
-        kb_id=state.kb_id,
-        top_k_each=per_query,
-        source_label="vector",
-    )
+    async def _pooled() -> list:
+        return await search.multi_query_search(
+            queries,
+            user_id=state.user_id,
+            kb_id=state.kb_id,
+            top_k_each=per_query,
+            source_label="vector",
+        )
 
-    graph_chunks: list = []
-    if is_available():
+    async def _graph() -> list:
+        """The graph half. Reads the question and nothing the searches produce,
+        so it has no business waiting for them -- `retrieve_hybrid` already runs
+        its two halves together and this one simply had not been given the same
+        treatment."""
+        if not is_available():
+            return []
         try:
             context = await traversal.traverse(state.query, state.kb_id)
-            if not context.is_empty:
-                state.graph_text = context.as_text()
-                state.graph_entities = context.seeds
-                graph_chunks = await search.fetch_chunks_by_id(
-                    context.chunk_ids,
-                    user_id=state.user_id,
-                    kb_id=state.kb_id,
-                    source_label="graph",
-                )
+            if context.is_empty:
+                return []
+            state.graph_text = context.as_text()
+            state.graph_entities = context.seeds
+            return await search.fetch_chunks_by_id(
+                context.chunk_ids,
+                user_id=state.user_id,
+                kb_id=state.kb_id,
+                source_label="graph",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Graph step of multi-hop failed: %s", str(exc)[:160])
+            return []
+
+    pooled, graph_chunks = await asyncio.gather(_pooled(), _graph())
 
     state.chunks = search.deduplicate(state.chunks + pooled + graph_chunks)
 

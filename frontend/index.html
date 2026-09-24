@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="SURE-GraphRAG - Adaptive Hybrid Graph-Agentic Retrieval Engine" />
     <title>SURE-GraphRAG</title>
+    <script>
+      // Runs before the first paint. Reading the stored theme in React instead
+      // would render one frame of dark before switching, which is exactly the
+      // flash people notice. Dark is the default and the fallback.
+      (function () {
+        try {
+          var stored = localStorage.getItem('sure-theme')
+          if (stored === 'light') document.documentElement.setAttribute('data-theme', 'light')
+        } catch (e) {
+          /* private window, blocked storage: stay dark */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

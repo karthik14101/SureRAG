@@ -23,12 +23,64 @@
   --color-warn: #fbbf24;
   --color-danger: #f87171;
 
+  /* Values that used to be written into rules as literal hex, which meant they
+     could not follow the theme: emphasis text, the code block, the scrollbar
+     thumb on hover, and the hover state of a raised button. */
+  --color-ink-strong: #ffffff;
+  --color-code-bg: #0a0e17;
+  --color-code-ink: #cbd5e1;
+  --color-surface-hover: #2b3752;
+  --color-scroll-hover: #33405c;
+
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas,
     monospace;
 
   --radius-xl2: 1rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Light theme.
+
+   Only the token values change; every utility in the app already reads them
+   through var(), so nothing else has to know a second palette exists. The ramp
+   is inverted rather than merely lightened -- `canvas` stays the recessive
+   surface and `surface` the raised one, so depth reads the same way in both.
+
+   The accent hues are darkened rather than reused: #22d3ee on white is around
+   1.9:1, which is unreadable. Each one below clears 4.5:1 on `canvas`.
+   --------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  --color-canvas: #f5f6fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f2f7;
+  --color-surface-3: #e4e8f0;
+  --color-line: #d7dce6;
+  --color-line-soft: #e6e9f0;
+
+  --color-ink: #0f172a;
+  --color-ink-muted: #4b5567;
+  --color-ink-faint: #5d6777;
+
+  --color-brand: #4f46e5;
+  /* "soft" means lower contrast against the page, which on a light background
+     means darker, not lighter: this is link and marker text. */
+  --color-brand-soft: #4338ca;
+  --color-brand-dim: #6366f1;
+
+  /* Solved against surface-3, the darkest surface that carries text, so
+     each clears 4.5:1 on every lighter one too. */
+  --color-accent: #0d708c;
+  --color-success: #037555;
+  --color-warn: #a74d08;
+  --color-danger: #c82222;
+
+  --color-ink-strong: #0b1220;
+  --color-code-bg: #eef1f7;
+  --color-code-ink: #1f2937;
+  --color-surface-hover: #d9dfea;
+  --color-scroll-hover: #c3cad8;
 }
 
 @layer base {
@@ -69,7 +121,7 @@
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #33405c;
+    background: var(--color-scroll-hover);
     background-clip: content-box;
   }
 
@@ -110,7 +162,7 @@
     color: var(--color-ink);
   }
   .prose-answer strong {
-    color: #fff;
+    color: var(--color-ink-strong);
     font-weight: 600;
   }
   .prose-answer a {
@@ -149,7 +201,7 @@
     color: var(--color-accent);
   }
   .prose-answer pre {
-    background: #0a0e17;
+    background: var(--color-code-bg);
     border: 1px solid var(--color-line);
     border-radius: 0.65rem;
     padding: 0.9rem 1rem;
@@ -158,7 +210,7 @@
   .prose-answer pre code {
     background: transparent;
     padding: 0;
-    color: #cbd5e1;
+    color: var(--color-code-ink);
     font-size: 0.82rem;
     line-height: 1.6;
   }

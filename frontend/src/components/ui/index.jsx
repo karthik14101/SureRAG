@@ -15,7 +15,7 @@ import { useToast } from '../../hooks/useToast'
 const BUTTON_VARIANTS = {
   primary:
     'bg-brand text-white hover:bg-brand-dim disabled:hover:bg-brand shadow-sm shadow-brand/25',
-  secondary: 'bg-surface-3 text-ink hover:bg-[#2b3752] border border-line',
+  secondary: 'bg-surface-3 text-ink hover:bg-surface-hover border border-line',
   ghost: 'text-ink-muted hover:text-ink hover:bg-surface-2',
   danger: 'bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25',
   outline: 'border border-line text-ink hover:bg-surface-2',

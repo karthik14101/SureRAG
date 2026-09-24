@@ -42,6 +42,8 @@ PROVIDER_LABEL = "Azure OpenAI"
 # health probe asking for 8 tokens) come back empty. It is a ceiling, not spend:
 # with reasoning_effort=low, actual usage stays small.
 REASONING_TOKEN_FLOOR = 4000
+# The fast tier only ever emits small JSON, so it reserves far less headroom.
+FAST_TOKEN_FLOOR = 1500
 
 # A deployment name that mentions a reasoning family. Only a starting guess --
 # names are user-chosen, so the API's own 400s are the real authority.
@@ -115,8 +117,12 @@ def _usage(response) -> TokenUsage:
 class AzureOpenAIProvider(LLMProvider):
     name = "azure"
 
-    def __init__(self) -> None:
+    def __init__(self, fast: bool = False) -> None:
         host, deployment, api_version = settings.azure_target
+        if fast:
+            # A second deployment if there is one, otherwise the same deployment
+            # told to think less. Either way it is the same resource and key.
+            deployment = (settings.azure_openai_fast_deployment or "").strip() or deployment
 
         if not settings.azure_openai_api_key:
             raise UpstreamError(
@@ -150,18 +156,27 @@ class AzureOpenAIProvider(LLMProvider):
         self._reasoning_mode = mode
         self._caps = _Capabilities(reasoning=reasoning, supports_temperature=not reasoning)
 
-        self._vision = bool(settings.azure_openai_vision)
-        effort = (settings.azure_openai_reasoning_effort or "").strip().lower()
+        self.fast = fast
+        # The fast tier never handles images; captioning always uses the main one.
+        self._vision = bool(settings.azure_openai_vision) and not fast
+        raw_effort = (
+            settings.azure_openai_fast_reasoning_effort
+            if fast
+            else settings.azure_openai_reasoning_effort
+        )
+        effort = (raw_effort or "").strip().lower()
         self._effort = effort or None
 
         self._client = self._build_client()
 
         logger.info(
-            "Azure OpenAI: host=%s deployment=%s api=%s reasoning=%s (%s)",
+            "Azure OpenAI%s: host=%s deployment=%s api=%s reasoning=%s effort=%s (%s)",
+            " [fast]" if fast else "",
             self.host,
             self.deployment,
             "v1" if self._uses_v1 else self.api_version,
             reasoning,
+            self._effort or "default",
             "configured" if mode != "auto" else "inferred from name, will adapt",
         )
 
@@ -230,7 +245,10 @@ class AzureOpenAIProvider(LLMProvider):
 
         tokens = int(spec.get("max_tokens") or settings.llm_max_tokens)
         if self._caps.reasoning:
-            tokens = max(tokens, REASONING_TOKEN_FLOOR)
+            # Azure rate-limits on the requested ceiling, not just what is used,
+            # so the fast tier reserves less: at minimal effort a router call
+            # does not need the headroom a full answer does.
+            tokens = max(tokens, FAST_TOKEN_FLOOR if self.fast else REASONING_TOKEN_FLOOR)
             if self._caps.send_reasoning_effort and self._effort:
                 request["reasoning_effort"] = self._effort
         request[self._caps.token_param] = tokens
@@ -251,7 +269,10 @@ class AzureOpenAIProvider(LLMProvider):
         """Learn from a 400. Returns True if something changed and a retry may help."""
         code, param, message = _error_details(exc)
         caps = self._caps
-        before = repr(caps)
+        # The effort level lives on the provider rather than in caps, so it has
+        # to be part of the change check: an adaptation the caller cannot see is
+        # an adaptation that never gets retried.
+        before = (repr(caps), self._effort)
         unsupported = (
             "unsupported" in code
             or "unsupported" in message
@@ -277,7 +298,16 @@ class AzureOpenAIProvider(LLMProvider):
                 if self._reasoning_mode == "auto":
                     caps.reasoning = True
         elif param == "reasoning_effort" or "reasoning_effort" in message:
-            caps.send_reasoning_effort = False
+            # "minimal" is GPT-5 only; the o-series accepts low/medium/high. Step
+            # down to "low" before giving up on the parameter altogether.
+            if self._effort == "minimal":
+                self._effort = "low"
+                logger.info(
+                    "Azure deployment '%s' rejected reasoning_effort=minimal; using low.",
+                    self.deployment,
+                )
+            else:
+                caps.send_reasoning_effort = False
         elif param == "response_format" or "response_format" in message or "json_object" in message:
             # JSON is still requested in the prompt; parse_json_object copes
             # with fences and prose around it.
@@ -285,7 +315,7 @@ class AzureOpenAIProvider(LLMProvider):
         elif "role" in param or ("'system'" in message and unsupported):
             caps.supports_system_role = False
 
-        changed = repr(caps) != before
+        changed = (repr(caps), self._effort) != before
         if changed:
             logger.info(
                 "Azure deployment '%s' rejected %s; adapted and retrying. Now: %s",

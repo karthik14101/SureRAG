@@ -6,33 +6,62 @@ retrieving the right passage and retrieving noise.
 """
 from __future__ import annotations
 
+import re
 import time
 
 from app.agent.prompts import CONDENSE_SYSTEM, CONDENSE_TEMPLATE, format_history
 from app.agent.state import AgentState
 from app.llm.base import ChatMessage
-from app.llm.factory import get_llm
+from app.llm.factory import get_fast_llm
 from app.logging_conf import get_logger
 
 logger = get_logger(__name__)
 
 # Below this length a question is usually already standalone.
 MIN_REWRITE_LENGTH = 12
-# Signals that a question depends on earlier turns.
-REFERENCE_MARKERS = (
-    " it", "it ", "its ", "they", "them", "their", "this", "that", "these",
-    "those", "he ", "she ", "his ", "her ", "the same", "above", "previous",
-    "earlier", "instead", "also", "what about", "how about", "and the",
+
+# Words that only make sense against an earlier turn. Matched on word
+# boundaries, which is the whole point: this list used to be tested with
+# substring containment, and "he " matched inside "t-h-e ". Every question
+# containing the word "the" therefore looked like a follow-up, so 44 of 47
+# second-and-later turns paid a 2.7s rewrite of a question that already stood
+# alone -- and a needless rewrite can only damage a good question.
+REFERENCE_WORDS = (
+    "it", "its", "they", "them", "their", "this", "that", "these", "those",
+    "he", "she", "him", "his", "her", "hers", "one", "ones", "both",
+)
+REFERENCE_PHRASES = (
+    "the same", "the above", "the previous", "the former", "the latter",
+    "what about", "how about", "as well", "instead", "earlier", "previously",
+    "mentioned", "you said", "your answer",
+)
+# "the first"/"the second" are deliberately absent: they point at an earlier
+# turn about as often as they name an ordinal in the question itself ("the
+# first owner"), and a false positive here costs a model call.
+
+_REFERENCE_RE = re.compile(
+    r"\b(?:{})\b".format("|".join(REFERENCE_WORDS)), re.IGNORECASE
+)
+_PHRASE_RE = re.compile(
+    r"(?:{})".format("|".join(re.escape(phrase) for phrase in REFERENCE_PHRASES)),
+    re.IGNORECASE,
 )
 
 
 def needs_rewrite(question: str, history: list[ChatMessage]) -> bool:
+    """Whether this question can only be understood against the conversation.
+
+    Over-triggering is the safe direction -- rewriting a standalone question
+    usually returns it near-verbatim -- but it is not free: every false positive
+    is a model call, two to three seconds of the reader's time, and one more
+    chance for the rewrite to lose a detail the original had.
+    """
     if not history:
         return False
-    lowered = " " + question.strip().casefold()
-    if len(question.strip()) < MIN_REWRITE_LENGTH:
+    text = question.strip()
+    if len(text) < MIN_REWRITE_LENGTH:
         return True
-    return any(marker in lowered for marker in REFERENCE_MARKERS)
+    return bool(_REFERENCE_RE.search(text) or _PHRASE_RE.search(text))
 
 
 async def condense(state: AgentState) -> AgentState:
@@ -56,14 +85,14 @@ async def condense(state: AgentState) -> AgentState:
     prompt = CONDENSE_TEMPLATE.format(history=history_text, question=state.question)
 
     try:
-        llm = get_llm()
+        llm = get_fast_llm()
         result = await llm.complete(
             CONDENSE_SYSTEM,
             [ChatMessage(role="user", content=prompt)],
             temperature=0.0,
             max_tokens=200,
         )
-        state.spend_call(result.usage)
+        state.spend_call(result.usage, fast=True)
         rewritten = result.text.strip().strip('"').strip()
 
         # Guard against a model that returns an explanation instead of a question.

@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.agent import orchestrator
 from app.agent.state import AgentState, Route
 from app.core.deps import CurrentUser, DbSession, client_key, get_owned_chat, get_owned_kb
-from app.core.errors import ValidationError
+from app.core.errors import NotFoundError, ValidationError
 from app.core.rate_limit import chat_limiter
 from app.db import models
 from app.db.base import SessionLocal
@@ -105,6 +105,17 @@ def list_messages(session_id: str, db: DbSession, user: CurrentUser) -> list[Mes
     ]
 
 
+@router.delete("/sessions/{session_id}/messages/{message_id}", status_code=204)
+def delete_message(
+    session_id: str, message_id: str, db: DbSession, user: CurrentUser
+) -> None:
+    """Delete one turn: a question and the answer it produced."""
+    chat = get_owned_chat(session_id, db, user)
+    removed = chat_service.delete_message(db, chat.id, message_id)
+    if not removed:
+        raise NotFoundError("Message not found in this chat.")
+
+
 # ---------------------------------------------------------------------------
 # Asking
 # ---------------------------------------------------------------------------
@@ -122,6 +133,7 @@ def _build_state(db, chat: models.ChatSession, user, question: str, force_route:
         history=history,
         history_summary=summary,
         forced_route=Route.parse(force_route),
+        corpus_profile=chat_service.corpus_profile(db, chat.kb_id),
     )
 
 

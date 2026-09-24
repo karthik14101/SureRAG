@@ -7,6 +7,11 @@ export const chatApi = {
   renameSession: (id, title) => api.patch(`/chat/sessions/${id}`, { title }),
   deleteSession: (id) => api.del(`/chat/sessions/${id}`),
   messages: (id) => api.get(`/chat/sessions/${id}/messages`),
+
+  /** Remove one turn: a question and the answer it produced. */
+  deleteMessage: (sessionId, messageId) =>
+    api.del(`/chat/sessions/${sessionId}/messages/${messageId}`),
+
   citation: (chunkId) => api.get(`/chat/citations/${chunkId}`),
 
   /** Non-streaming ask, kept for debugging and as a fallback. */

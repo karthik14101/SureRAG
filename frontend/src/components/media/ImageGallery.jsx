@@ -62,13 +62,17 @@ export function Lightbox({ images, index, onClose, onNavigate }) {
   if (!image) return null
 
   return (
+    // This overlay is black in both themes, so everything inside it is fixed
+    // light-on-dark rather than themed. Using the palette here made the close
+    // button, both arrows and the caption invisible in light mode, where
+    // `text-ink` resolves to near-black.
     <div className="fixed inset-0 z-[70] flex flex-col bg-black/90 animate-fade-in">
       <header className="flex items-start justify-between gap-4 px-5 py-4">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-ink">
+          <p className="truncate text-sm font-medium text-white">
             {image.caption || image.filename}
           </p>
-          <p className="text-xs text-ink-faint">
+          <p className="text-xs text-white/60">
             {image.page_no != null && `Page ${image.page_no} · `}
             {image.width} × {image.height}
             {images.length > 1 && ` · ${index + 1} of ${images.length}`}
@@ -76,7 +80,7 @@ export function Lightbox({ images, index, onClose, onNavigate }) {
         </div>
         <button
           onClick={onClose}
-          className="rounded-md p-1.5 text-ink-muted hover:bg-white/10 hover:text-ink"
+          className="rounded-md p-1.5 text-white/70 hover:bg-white/15 hover:text-white"
           aria-label="Close"
         >
           <X className="h-5 w-5" />
@@ -87,7 +91,7 @@ export function Lightbox({ images, index, onClose, onNavigate }) {
         {index > 0 && (
           <button
             onClick={() => onNavigate(index - 1)}
-            className="absolute left-4 rounded-full bg-white/10 p-2 text-ink hover:bg-white/20"
+            className="absolute left-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
             aria-label="Previous image"
           >
             <ChevronLeft className="h-5 w-5" />
@@ -104,7 +108,7 @@ export function Lightbox({ images, index, onClose, onNavigate }) {
         {index < images.length - 1 && (
           <button
             onClick={() => onNavigate(index + 1)}
-            className="absolute right-4 rounded-full bg-white/10 p-2 text-ink hover:bg-white/20"
+            className="absolute right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
             aria-label="Next image"
           >
             <ChevronRight className="h-5 w-5" />

@@ -14,13 +14,16 @@ logger = get_logger(__name__)
 
 async def retrieve_vector(state: AgentState, top_k: int | None = None) -> AgentState:
     started = time.perf_counter()
+    limit = top_k or settings.retrieval_top_k
     try:
-        chunks = await search.hybrid_search(
-            state.query,
-            user_id=state.user_id,
-            kb_id=state.kb_id,
-            top_k=top_k or settings.retrieval_top_k,
-        )
+        chunks = await state.take_prefetch(state.query, limit)
+        if chunks is None:
+            chunks = await search.hybrid_search(
+                state.query,
+                user_id=state.user_id,
+                kb_id=state.kb_id,
+                top_k=limit,
+            )
     except Exception as exc:  # noqa: BLE001
         raise UpstreamError(
             "Vector search is unavailable. Check that Qdrant is running "

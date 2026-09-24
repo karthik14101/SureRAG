@@ -66,8 +66,9 @@ class HuggingFaceProvider(LLMProvider):
     name = "huggingface"
     supports_vision = False
 
-    def __init__(self) -> None:
-        self.model_id = (settings.hf_model or "").strip()
+    def __init__(self, fast: bool = False) -> None:
+        self.fast = fast
+        self.model_id = ((settings.hf_fast_model if fast else "") or settings.hf_model).strip()
         if not self.model_id:
             raise UpstreamError(
                 "HF_MODEL is empty. Set it to a HuggingFace repo id such as "

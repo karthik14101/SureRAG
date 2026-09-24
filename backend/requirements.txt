@@ -77,3 +77,9 @@ openai>=1.68,<4.0        # Azure OpenAI / Azure AI Foundry (via the v1 API)
 # --- Utilities ---------------------------------------------------------------
 python-dotenv>=1.0.1,<2.0
 httpx>=0.27,<1.0
+
+# ---- tests ------------------------------------------------------------------
+# The suite in backend/tests/ needs none of this: `python tests/run.py` uses only
+# the standard library. The files are ordinary pytest files as well, so install
+# pytest if you prefer its output and `pytest` from the backend directory.
+#   pip install pytest

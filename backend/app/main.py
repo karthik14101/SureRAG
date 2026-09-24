@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
     from app.embeddings import encoder, sparse
 
     asyncio.create_task(asyncio.to_thread(encoder.warmup))
+    asyncio.create_task(asyncio.to_thread(encoder.warmup_reranker))
     asyncio.create_task(asyncio.to_thread(sparse.warmup))
 
     # Local LLMs (Ollama, HuggingFace) load their model now, in the background.

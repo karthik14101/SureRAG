@@ -30,11 +30,10 @@ Standalone question:"""
 # ---------------------------------------------------------------------------
 # Router: pick the retrieval strategy
 # ---------------------------------------------------------------------------
-ROUTER_SYSTEM = (
-    "You classify a question by the retrieval strategy it needs. "
-    "Return ONLY JSON: "
-    '{"route":"VECTOR|GRAPH|HYBRID|MULTIHOP|DIRECT","confidence":0.0-1.0,'
-    '"reason":"one short sentence"}\n\n'
+# The route menu, shared by the standalone router and the combined
+# understand call so the two can never drift into classifying by
+# different rules.
+ROUTE_CHOICES = (
     "Routes:\n"
     "- VECTOR: a fact, definition, description or summary likely stated in one "
     "passage. Example: 'What is the refund window?'\n"
@@ -49,6 +48,43 @@ ROUTER_SYSTEM = (
     "Example: 'hello', 'what can you do?'\n\n"
     "When genuinely uncertain, choose HYBRID."
 )
+
+ROUTER_SYSTEM = (
+    "You classify a question by the retrieval strategy it needs. "
+    "Return ONLY JSON: "
+    '{"route":"VECTOR|GRAPH|HYBRID|MULTIHOP|DIRECT","confidence":0.0-1.0,'
+    '"reason":"one short sentence"}\n\n'
+    + ROUTE_CHOICES
+)
+
+
+# Condensing and routing are both short structured judgements on the same input,
+# and each cost a separate round trip -- 2.7s and 2.1s on live traffic, with 23
+# of 64 turns paying both. Nothing in one depends on the other's answer, so they
+# go in a single call. The heuristics in front of each still run first and still
+# settle the easy cases for free.
+UNDERSTAND_SYSTEM = (
+    "You do two small jobs in one pass.\n\n"
+    "1. REWRITE the follow-up so it can be understood without the conversation:\n"
+    "   - Resolve every pronoun and implicit reference using the history.\n"
+    "   - Preserve the user's intent and specificity exactly. Add nothing.\n"
+    "   - If it already stands alone, return it unchanged.\n\n"
+    "2. CLASSIFY the REWRITTEN question by the retrieval strategy it needs.\n\n"
+    "Return ONLY JSON: "
+    '{"question":"the standalone question",'
+    '"route":"VECTOR|GRAPH|HYBRID|MULTIHOP|DIRECT","confidence":0.0-1.0,'
+    '"reason":"one short sentence about the route"}\n\n'
+    + ROUTE_CHOICES
+)
+
+UNDERSTAND_TEMPLATE = """Conversation so far:
+{history}
+
+Follow-up question: {question}
+
+Knowledge graph available: {graph_available}
+
+Rewrite it, then classify it."""
 
 ROUTER_TEMPLATE = """Question: {question}
 
@@ -66,8 +102,9 @@ VERIFIER_SYSTEM = (
     "it completely and accurately.\n\n"
     "Return ONLY JSON:\n"
     '{"sufficient": true|false, "score": 0.0-1.0, '
+    '"in_scope": true|false, '
     '"covered": ["aspects the context does answer"], '
-    '"missing": ["specific facts still needed"], '
+    '"missing": ["specific facts still needed AND plausibly in this corpus"], '
     '"suggested_queries": ["search phrases that would find the missing facts"], '
     '"reason": "one short sentence"}\n\n'
     "Scoring guide:\n"
@@ -75,11 +112,42 @@ VERIFIER_SYSTEM = (
     "- 0.7-0.9: the main question is answerable; minor details are missing.\n"
     "- 0.4-0.7: partially answerable; a substantive part is unsupported.\n"
     "- 0.0-0.4: the context is off-topic or nearly empty.\n\n"
-    "Be strict. Inferring beyond what the context states counts as missing. "
-    "Suggest at most 3 queries, each a keyword phrase rather than a question."
+    "COMPOSITION IS NOT A GAP. When a question asks how things relate -- a "
+    "link, a comparison, a trace -- the answer is assembled from several "
+    "passages, and assembling it is the answering step's job, not yours. Ask "
+    "whether each element the question names is present. If they are, the "
+    "context is sufficient, however much no single passage states the "
+    "connection. Enrichment is not a gap either: history, commentary, or the "
+    "full text of something already quoted in relevant part.\n\n"
+    "THE DOCUMENT'S WORDS ARE NOT THE ASKER'S WORDS. People name things by "
+    "appearance, symptom or nickname; documents name them technically. A passage "
+    "describing the same thing under another name IS evidence -- list it under "
+    '"covered"' " using the document's term. You are reading text only: a symbol, "
+    "icon, colour or diagram reaches you solely as whatever text describes it, so "
+    "a shape going unmentioned tells you nothing about whether the topic is "
+    "covered. Before reporting a gap, ask what these documents would call the "
+    "thing being asked about. A missing word is not a missing fact.\n\n"
+    "JUDGE AGAINST THIS CORPUS, NOT AGAINST AN IDEAL ANSWER. You are told what "
+    "the knowledge base contains. Material of a kind the corpus does not hold -- "
+    "commentary or case law in a corpus of primary texts, history in a corpus of "
+    "specifications, figures in a corpus of prose -- is OUT OF SCOPE, not "
+    "missing. Set \"in_scope\": false when the question, or the essential part of "
+    "it, needs that kind of material, and leave \"missing\" and "
+    '"suggested_queries" empty: searching again cannot conjure what was never '
+    "ingested, and saying so plainly is the better answer.\n"
+    "Only list something under \"missing\" if you would expect a document of the "
+    "kind described to contain it.\n\n"
+    "Be strict about grounding: inferring beyond what the context states counts "
+    "as missing. Suggest at most 3 queries, each a keyword phrase rather than a "
+    "question, and each written in the vocabulary you expect these documents to "
+    "use rather than the asker's: a word that has already failed to retrieve "
+    "anything will fail again."
 )
 
 VERIFIER_TEMPLATE = """Question: {question}
+
+What this knowledge base contains:
+{corpus}
 
 Retrieved context:
 {context}
@@ -99,6 +167,11 @@ EXPANSION_SYSTEM = (
     "- Use keyword-style phrasing and vocabulary likely to appear in the source "
     "documents, not conversational phrasing.\n"
     "- Vary the wording: include synonyms and likely domain terms.\n"
+    "- Where the question uses a colloquial or descriptive term -- a symbol "
+    "described by its shape, a fault described by its symptom -- at least one "
+    "query must use the technical name a manual or specification would print "
+    "instead. Repeating a term the last search already failed on wastes the "
+    "pass.\n"
     "- At most 3 queries."
 )
 
@@ -156,7 +229,7 @@ ANSWERING:
 - Use markdown: short paragraphs, **bold** for key terms, bullet lists for multiple items, tables for comparisons.
 - Quote exact figures, names and dates from the sources rather than paraphrasing them.
 - If the sources conflict, say so and cite both.
-- If the sources only partially answer the question, answer what you can, then state exactly what is missing.
+- If the sources only partially answer the question, answer what you can, then state exactly what is missing -- in one short closing paragraph, not a section-by-section audit of the gaps. Cataloguing what you could not find is not an answer.
 - If the sources are irrelevant to the question, say you could not find it in this knowledge base. Do not fall back on general knowledge.
 - Match the question's language and level of detail. Be concise; length is not quality.
 
@@ -169,6 +242,21 @@ Numbered sources:
 {context}
 
 Write the answer, citing sources inline with [n] markers."""
+
+# Prepended to the synthesis prompt when the verifier judged the question to
+# need material this corpus does not hold. Without it the model pads a negative
+# answer with citations to whatever was merely nearby, which reads as evidence
+# when it is noise.
+SCOPE_NOTE = """Scope note: the evidence check concluded that this knowledge base does not contain the kind of material this question needs. Open by saying plainly what is absent, then answer whatever part the sources genuinely do support. Keep the whole reply under 150 words: a short, honest "not in here, but here is what is" beats a long tour of the gaps. Cite only passages you actually rely on -- if none are relevant, cite nothing rather than listing what was searched.
+
+"""
+
+# Same idea for evidence that is thin rather than absent. The temptation is to
+# compensate for weak sources with length; the result is a long answer that is
+# no better grounded than a short one.
+THIN_EVIDENCE_NOTE = """Note: the evidence check rated this material as only partly covering the question. Answer what the sources support, and close with one sentence naming what is missing. Do not pad: no recap of the question, no section listing everything absent, and no repetition of the same caveat.
+
+"""
 
 # Used when retrieval found nothing at all.
 NO_CONTEXT_SYSTEM = (

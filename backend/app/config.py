@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "openai/gpt-oss-120b"
 
+    # ---- fast tier ----------------------------------------------------------
+    # Routing, condensing, decomposition and verification are small JSON calls.
+    # Run them on something cheap and they stop dominating both latency and
+    # quota; the main model still writes every answer. Leave these empty and the
+    # fast tier is the main model, exactly as before.
+    gemini_fast_model: str = ""
+    groq_fast_model: str = ""
+    ollama_fast_model: str = ""
+    hf_fast_model: str = ""
+
     # Azure OpenAI / Azure AI Foundry. The endpoint may be pasted in any form the
     # Foundry portal shows, including a full "Target URI" -- see azure_target.
     azure_openai_endpoint: str = ""
@@ -58,6 +68,14 @@ class Settings(BaseSettings):
     azure_openai_reasoning_effort: str = "low"
     # Set false if the deployment is text-only; images then fall back to OCR.
     azure_openai_vision: bool = True
+    # Optional second deployment in the SAME resource for the fast tier (e.g.
+    # gpt-4o-mini beside gpt-5). Empty means the fast tier reuses the main
+    # deployment with the reasoning effort below, which needs no extra quota.
+    azure_openai_fast_deployment: str = ""
+    # Effort for fast-tier calls on a reasoning deployment. Azure bills reasoning
+    # tokens as output, so a router call that deliberates costs as much as a
+    # paragraph of answer: "minimal" is the cheapest honest setting.
+    azure_openai_fast_reasoning_effort: str = "minimal"
 
     # Ollama (local server, https://ollama.com). The model must be pulled first:
     #   ollama pull qwen2.5:7b
@@ -112,9 +130,31 @@ class Settings(BaseSettings):
     embedding_dim: int = 384
     embedding_batch_size: int = 32
     embedding_device: str = "cpu"
-    rerank_enabled: bool = False
+    # On by default: retrieval pools passages from several queries whose scores
+    # are not comparable, so without a cross-encoder pass the evidence the
+    # verifier sees is an arbitrary slice of the pool rather than the best of it.
+    rerank_enabled: bool = True
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    rerank_top_n: int = 8
+    # 0 = keep the whole reordered pool. Reranking runs again after every
+    # expansion pass, so a cut here permanently discards evidence the loop
+    # had already found. Only set this if memory is genuinely a concern.
+    rerank_top_n: int = 0
+    # Ceiling on how many passages get scored. Cost is roughly linear in
+    # candidates x characters -- measured on a laptop CPU, 40 passages of 900
+    # chars takes 1.2s and of 1400 chars 1.9s, against the 5-9s model call a
+    # better ranking saves. The cap has to clear the whole retrieved pool,
+    # though: a passage below it is never scored and so can never be promoted,
+    # which is exactly how Article 51A stayed invisible at fused rank 32.
+    rerank_candidates: int = 50
+    # Passages are truncated to this many characters for scoring only. The
+    # cross-encoder reads 512 tokens (~2000 chars) at most anyway, and the
+    # opening of a passage is what says what it is about.
+    rerank_max_chars: int = 1000
+    # How much the cross-encoder overrides retrieval order: 1.0 trusts it
+    # completely, 0.0 ignores it. Default 0.6 leans on it while keeping
+    # retrieval as a prior, because a cross-encoder trained on web text is not
+    # reliably better than BM25+dense on structured or domain-specific records.
+    rerank_weight: float = 0.6
     sparse_enabled: bool = True
 
     # ---- datastores ---------------------------------------------------------
@@ -134,7 +174,14 @@ class Settings(BaseSettings):
     graph_seed_entities: int = 6
     sure_threshold: float = 0.65
     agent_max_iterations: int = 2
+    # Two call budgets, because the two tiers do not cost the same. The main
+    # budget governs full-reasoning calls (synthesis, and everything when no
+    # fast tier is configured). The fast budget governs the cheap ones -- the
+    # condenser, router, verifier and expansion probes -- which are what the
+    # SURE loop actually spends. Sharing one budget meant six cheap calls could
+    # end the loop before the reasoning it was protecting ever ran.
     agent_max_llm_calls: int = 6
+    agent_max_fast_llm_calls: int = 12
     agent_timeout_seconds: int = 45
     graph_extraction: Literal["on", "off", "selective"] = "selective"
 

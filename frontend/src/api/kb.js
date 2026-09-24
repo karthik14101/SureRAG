@@ -24,6 +24,28 @@ export const kbApi = {
   },
   chunkFacets: (id) => api.get(`/kb/${id}/chunks/facets`),
   chunk: (chunkId) => api.get(`/chunks/${chunkId}`),
+
+  /* Knowledge-graph explorer. Entities are keyed by normalised name. */
+  graphFacets: (id) => api.get(`/kb/${id}/graph/facets`),
+  graphEntities(id, { q, type, sort = 'degree', limit = 30, offset = 0 } = {}) {
+    const params = new URLSearchParams({ sort, limit: String(limit), offset: String(offset) })
+    if (q) params.set('q', q)
+    if (type) params.set('type', type)
+    return api.get(`/kb/${id}/graph/entities?${params.toString()}`)
+  },
+  graphEntity: (id, entityId) =>
+    api.get(`/kb/${id}/graph/entity?${new URLSearchParams({ id: entityId }).toString()}`),
+  graphRelations(id, { q, predicate, limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (q) params.set('q', q)
+    if (predicate) params.set('predicate', predicate)
+    return api.get(`/kb/${id}/graph/relations?${params.toString()}`)
+  },
+  graphOverview: (id, limit = 40) => api.get(`/kb/${id}/graph/overview?limit=${limit}`),
+  graphNeighbourhood(id, entityId, { hops = 1, limit = 40 } = {}) {
+    const params = new URLSearchParams({ id: entityId, hops: String(hops), limit: String(limit) })
+    return api.get(`/kb/${id}/graph/neighbourhood?${params.toString()}`)
+  },
   deleteDocument: (docId) => api.del(`/documents/${docId}`),
   limits: () => api.get('/config/limits'),
 

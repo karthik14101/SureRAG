@@ -25,7 +25,7 @@ class GroqProvider(LLMProvider):
     name = "groq"
     supports_vision = False
 
-    def __init__(self) -> None:
+    def __init__(self, fast: bool = False) -> None:
         if not settings.groq_api_key:
             raise UpstreamError(
                 "GROQ_API_KEY is empty. Add your GroqCloud key to .env, "
@@ -36,7 +36,8 @@ class GroqProvider(LLMProvider):
             timeout=float(settings.llm_timeout_seconds),
             max_retries=0,  # retries are handled by app.llm.retry
         )
-        self.model = settings.groq_model
+        self.fast = fast
+        self.model = (settings.groq_fast_model if fast else "") or settings.groq_model
 
     @staticmethod
     def _to_messages(system: str, messages: list[ChatMessage]) -> list[dict]:

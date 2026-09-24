@@ -36,6 +36,7 @@ export function ChatPage() {
     createSession,
     renameSession,
     deleteSession,
+    deleteMessage,
     send,
     stop,
     clearError,
@@ -97,6 +98,14 @@ export function ChatPage() {
       await createSession(kbId)
     }
     await send(question, forceRoute)
+  }
+
+  async function handleDeleteMessage(messageId) {
+    try {
+      await deleteMessage(messageId)
+    } catch (err) {
+      toast.error(err.message || 'Could not delete that message.')
+    }
   }
 
   const hasThread = Boolean(activeSessionId)
@@ -193,6 +202,14 @@ export function ChatPage() {
                 key={message.id}
                 message={message}
                 onOpenCitation={setOpenCitation}
+                // A turn that has not been saved yet has no id the server
+                // would recognise, and nothing is removable mid-answer.
+                deletable={
+                  message.role === 'user' &&
+                  !sending &&
+                  !String(message.id).startsWith('pending-')
+                }
+                onDelete={handleDeleteMessage}
               />
             ))}
 

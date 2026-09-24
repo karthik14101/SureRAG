@@ -124,7 +124,7 @@ export function Composer({ onSend, onStop, sending, disabled, placeholder }) {
             {sending ? (
               <button
                 onClick={onStop}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-surface-3 px-3 py-1.5 text-[11px] font-medium text-ink hover:bg-[#2b3752]"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-surface-3 px-3 py-1.5 text-[11px] font-medium text-ink hover:bg-surface-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
                 Stop

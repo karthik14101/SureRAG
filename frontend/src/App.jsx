@@ -7,10 +7,12 @@ import {
   Routes,
   useLocation,
 } from 'react-router-dom'
-import { Activity, Brain, LogOut } from 'lucide-react'
+import { Activity, Brain, LogOut, Moon, Sun } from 'lucide-react'
 import { useAuthStore } from './store/authStore'
 import { healthApi } from './api/health'
 import { cn } from './lib/cn'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { applyTheme, readTheme } from './lib/theme'
 import { Badge, Button, Modal, Spinner, ToastViewport } from './components/ui'
 import { AuthPanel } from './components/auth/AuthPanel'
 import { DashboardPage } from './pages/DashboardPage'
@@ -90,6 +92,27 @@ function HealthModal({ open, onClose }) {
   )
 }
 
+/** Flips the palette. Dark is the default; the choice is remembered. */
+function ThemeToggle() {
+  const [theme, setTheme] = useState(readTheme)
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  const next = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <button
+      onClick={() => setTheme(next)}
+      className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
+      title={`Switch to ${next} mode`}
+      aria-label={`Switch to ${next} mode`}
+    >
+      {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  )
+}
+
 function TopBar() {
   const user = useAuthStore((state) => state.user)
   const signOut = useAuthStore((state) => state.signOut)
@@ -115,10 +138,13 @@ function TopBar() {
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle />
+
           <button
             onClick={() => setShowHealth(true)}
             className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink"
             title="System status"
+            aria-label="System status"
           >
             <Activity className="h-4 w-4" />
           </button>
@@ -141,11 +167,14 @@ function Shell() {
     <div className="flex h-full flex-col">
       <TopBar />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/kb/:kbId" element={<KBDetailPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        {/* Scoped below TopBar so a broken page still leaves a way out. */}
+        <ErrorBoundary compact>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/kb/:kbId" element={<KBDetailPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </div>
     </div>
   )
@@ -157,9 +186,11 @@ function ChatShell() {
     <div className="flex h-full flex-col">
       <TopBar />
       <div className="min-h-0 flex-1">
-        <Routes>
-          <Route path="/chat/:kbId" element={<ChatPage />} />
-        </Routes>
+        <ErrorBoundary compact>
+          <Routes>
+            <Route path="/chat/:kbId" element={<ChatPage />} />
+          </Routes>
+        </ErrorBoundary>
       </div>
     </div>
   )

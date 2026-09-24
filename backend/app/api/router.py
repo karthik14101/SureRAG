@@ -8,6 +8,7 @@ from app.api.routes import (
     chat,
     chunks,
     documents,
+    graph,
     health,
     jobs,
     knowledge_base,
@@ -22,5 +23,6 @@ api_router.include_router(knowledge_base.router)
 api_router.include_router(documents.router)
 api_router.include_router(jobs.router)
 api_router.include_router(chunks.router)
+api_router.include_router(graph.router)
 api_router.include_router(chat.router)
 api_router.include_router(media.router)

@@ -23,14 +23,15 @@ class GeminiProvider(LLMProvider):
     name = "gemini"
     supports_vision = True
 
-    def __init__(self) -> None:
+    def __init__(self, fast: bool = False) -> None:
         if not settings.gemini_api_key:
             raise UpstreamError(
                 "GEMINI_API_KEY is empty. Add your Google AI Studio key to .env, "
                 "or set LLM_PROVIDER=groq."
             )
         self._client = genai.Client(api_key=settings.gemini_api_key)
-        self.model = settings.gemini_model
+        self.fast = fast
+        self.model = (settings.gemini_fast_model if fast else "") or settings.gemini_model
         self.vision_model = settings.gemini_vision_model
 
     # ---- helpers ------------------------------------------------------------

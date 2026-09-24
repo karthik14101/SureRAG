@@ -1,12 +1,13 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AlertTriangle, Brain, User } from 'lucide-react'
+import { AlertTriangle, Brain, Trash2, User, X } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { formatDuration } from '../../lib/format'
 import { CitationList } from '../citations/CitationChip'
 import { ImageGallery } from '../media/ImageGallery'
 import { ReasoningTrail } from '../agent/ReasoningTrail'
+import { ThinkingIndicator } from './ThinkingIndicator'
 
 /**
  * Turn inline [n] markers into clickable superscripts.
@@ -45,7 +46,7 @@ function renderWithMarkers(children, citations, onOpenCitation) {
           className={cn(
             'mx-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded px-1',
             'align-super text-[10px] font-semibold leading-none',
-            'bg-brand/20 text-brand-soft transition-colors hover:bg-brand/35 hover:text-white'
+            'bg-brand/20 text-brand-soft transition-colors hover:bg-brand hover:text-white'
           )}
         >
           {index}
@@ -95,27 +96,78 @@ function AssistantContent({ message, streaming, onOpenCitation }) {
   )
 }
 
+/**
+ * A question, with a control to remove the turn it started.
+ *
+ * Deletion is irreversible and this app has no modal, so the trash button asks
+ * once in place rather than acting on the first click.
+ */
+function UserMessage({ message, deletable, onDelete }) {
+  const [confirming, setConfirming] = useState(false)
+
+  return (
+    <div className="group flex justify-end gap-3 animate-slide-up">
+      {deletable && (
+        <div className="mt-1.5 flex items-start gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+          {confirming ? (
+            <>
+              <button
+                onClick={() => {
+                  setConfirming(false)
+                  onDelete?.(message.id)
+                }}
+                className="rounded-md px-2 py-1 text-[11px] font-medium text-danger transition-colors hover:bg-danger/10"
+              >
+                Delete?
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                title="Keep it"
+                aria-label="Keep this question"
+                className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-3 hover:text-ink"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              title="Delete this question and its answer"
+              aria-label="Delete this question and its answer"
+              className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-surface-3 hover:text-danger"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="max-w-[min(42rem,85%)] rounded-xl2 rounded-br-md border border-brand/25 bg-brand/[0.12] px-4 py-2.5">
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+          {message.content}
+        </p>
+      </div>
+      <div className="mt-0.5 h-7 w-7 shrink-0 rounded-lg border border-line bg-surface-2 p-1.5">
+        <User className="h-full w-full text-ink-muted" />
+      </div>
+    </div>
+  )
+}
+
 export const MessageBubble = memo(function MessageBubble({
   message,
   streaming = false,
   liveTraces,
   liveStatus,
   onOpenCitation,
+  deletable = false,
+  onDelete,
 }) {
   const isUser = message.role === 'user'
 
   if (isUser) {
     return (
-      <div className="flex justify-end gap-3 animate-slide-up">
-        <div className="max-w-[min(42rem,85%)] rounded-xl2 rounded-br-md border border-brand/25 bg-brand/[0.12] px-4 py-2.5">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
-            {message.content}
-          </p>
-        </div>
-        <div className="mt-0.5 h-7 w-7 shrink-0 rounded-lg border border-line bg-surface-2 p-1.5">
-          <User className="h-full w-full text-ink-muted" />
-        </div>
-      </div>
+      <UserMessage message={message} deletable={deletable} onDelete={onDelete} />
     )
   }
 
@@ -141,6 +193,11 @@ export const MessageBubble = memo(function MessageBubble({
           <div className="rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-3">
             <p className="text-sm leading-relaxed text-danger">{message.content}</p>
           </div>
+        ) : streaming && !message.content ? (
+          // Before the first token there is nothing to stream, and that is most
+          // of the wait. Say what is happening instead of blinking a caret at
+          // an empty box; the tokens replace this the moment they start.
+          <ThinkingIndicator traces={liveTraces} status={liveStatus} />
         ) : (
           <AssistantContent
             message={message}

@@ -120,6 +120,17 @@ def _rerank_sync(query: str, passages: list[str]) -> list[float]:
     return [float(s) for s in scores]
 
 
+def warmup_reranker() -> None:
+    """Load the cross-encoder at startup. It is on by default, so paying the
+    ~80MB download and load on someone's first question is avoidable."""
+    if not settings.rerank_enabled:
+        return
+    try:
+        _rerank_sync("warmup", ["warmup passage"])
+    except Exception as exc:  # noqa: BLE001 - reranking degrades gracefully
+        logger.error("Reranker warmup failed, retrieval will use vector order: %s", exc)
+
+
 async def rerank_scores(query: str, passages: list[str]) -> list[float] | None:
     """Cross-encoder relevance scores, or None if reranking is off/unavailable."""
     if not settings.rerank_enabled or not passages:
